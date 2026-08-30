@@ -21,7 +21,7 @@ format:      signed PCM
 bit depth:   16
 ```
 
-The starter archive includes clean references and deterministic noisy variants.
+The repository includes clean references and deterministic noisy variants.
 
 ### Sample 01 — general phonetic coverage
 
@@ -79,7 +79,7 @@ Seed:                 listed in samples/audio/manifest.csv
 
 These values are intentionally audible but not catastrophic.
 
-Also generate two diagnostic variants from Sample 01:
+Two diagnostic variants from Sample 01 are also included:
 - `01_general_gaussian.wav`: Gaussian only;
 - `01_general_impulse.wav`: impulses only.
 
@@ -87,7 +87,7 @@ This makes the expected filter specialization easier to hear.
 
 ## Listening protocol
 
-After Phase 6 is implemented:
+Run the listening comparison with:
 
 ```bash
 cargo run --release -- audio compare \
@@ -137,7 +137,7 @@ Do not automatically tune audio against RMSE in v0.1; manual listening is part o
 
 Reject:
 - compressed WAV codecs;
-- unsupported bit depth in MVP;
+- unsupported bit depths;
 - empty files;
 - non-finite decoded values;
 - reference files with mismatched metadata/sample count.

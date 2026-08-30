@@ -52,7 +52,7 @@ The dotted arrows represent forbidden reverse coupling.
 
 ## Core data model
 
-Suggested structs:
+Core structs:
 
 ```rust
 pub struct SignalSeries {
@@ -76,7 +76,7 @@ pub struct FilterOutputs {
 }
 ```
 
-Keep these domain types simple. Avoid a generic framework unless a later phase proves it is needed.
+These domain types remain simple, and the implementation deliberately avoids a generic framework.
 
 ## Synthetic pipeline
 
@@ -145,4 +145,4 @@ flowchart LR
 
 ## Startup and state
 
-Every command should construct fresh filters. No filter state should leak between channels, files, traces, tuning candidates, or repeated commands.
+Every command constructs fresh filters. Filter state does not leak between channels, files, traces, tuning candidates, or repeated commands.

@@ -2,9 +2,9 @@
 
 ## Product statement
 
-`signal-filter-shootout` is a local Rust CLI for learning and practical comparison of scalar online filters. It must be deterministic, small, inspectable, and useful both with generated IoT-like data and with real scalar CSV data. A second phase applies the same filters to WAV samples so the user can hear model strengths and weaknesses.
+`signal-filter-shootout` is a local Rust CLI for learning and practical comparison of scalar online filters. It is deterministic, small, inspectable, and works with generated IoT-like data, real scalar CSV data, and WAV samples that let users hear model strengths and weaknesses.
 
-## MVP functional requirements
+## Implemented functionality
 
 ### Synthetic sensor mode
 - Generate `N` samples of a configurable sine-wave truth signal.
@@ -31,7 +31,7 @@
 
 ### Audio mode
 - Read uncompressed PCM WAV via `hound`.
-- MVP formats: integer PCM with 16-bit samples; mono or stereo.
+- Supported formats: signed 16-bit integer PCM; mono or stereo.
 - Internally normalize each sample to `f64` in `[-1, 1]`.
 - Process channels independently with identical filter parameters but separate filter state.
 - Preserve sample rate and channel count.
@@ -74,7 +74,7 @@ Tie-break Kalman tuning by:
 
 ## Defaults
 
-Suggested defaults:
+The CLI uses these defaults:
 
 | Parameter | Default |
 |---|---:|
@@ -104,7 +104,7 @@ Suggested defaults:
 - Automatic perceptual audio-quality scoring such as PESQ/STOI.
 - Production-grade statistical inference of process models.
 
-## Stretch goals
+## Possible future work (not part of v0.1)
 - Median -> Kalman hybrid filter.
 - Auto-tune EWMA alpha and median window.
 - Float WAV input.

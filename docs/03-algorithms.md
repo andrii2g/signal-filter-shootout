@@ -27,7 +27,7 @@ Maintain the most recent odd `window` samples. For the startup prefix use all sa
 
 For an even startup count, define median as the arithmetic mean of the two middle sorted values. Once the configured odd window is full, the median is a single middle value.
 
-MVP implementation may sort a small copied window on every update. The point is clarity, not asymptotic optimization.
+The implementation sorts a small copied window on every update. The point is clarity, not asymptotic optimization.
 
 Configuration:
 - `window >= 1`;
@@ -62,10 +62,10 @@ Update:
     P = (1 - K) * P_prior
 ```
 
-Suggested initialization:
-- estimate initialized from first measurement unless explicit `x0` is later added;
-- covariance `P = p0`;
-- first measurement still performs a regular predict/update after initialization only if tests/documentation choose that convention. Pick one convention and keep it stable. Recommended simpler convention: first measurement becomes estimate directly and is emitted directly; subsequent measurements run equations.
+Initialization:
+- the estimate is initialized from the first measurement;
+- covariance starts at `P = p0`;
+- the first measurement is emitted directly, and subsequent measurements run the predict/update equations.
 
 Validation:
 - `Q >= 0`;
@@ -127,7 +127,7 @@ SNR_dB = 10 * log10(signal_power/error_power)
 
 Special cases:
 - zero error power -> positive infinity SNR represented as an enum/status or formatted `inf`, never panic;
-- zero signal power with nonzero error -> negative infinity/undefined policy must be explicit; recommended return `None` for SNR and print `n/a`.
+- zero signal power with nonzero error -> return `None` for SNR and print `n/a`.
 
 SNR improvement:
 
@@ -154,7 +154,7 @@ Keep this metric isolated so its definition can evolve without changing core fil
 
 Purpose: obtain a stable offline target for relative Kalman parameter search. It is not ground truth.
 
-Recommended two-stage construction:
+Construction:
 
 1. Hampel-style despiking
    - window radius = 3 (7 points where full);

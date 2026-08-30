@@ -125,11 +125,11 @@ signal-filter-shootout audio filter <INPUT.wav> <OUTPUT.wav> \
 Relevant options:
 
 ```text
---ewma-alpha <F64>
---median-window <ODD_USIZE>
---kalman-q <F64>
---kalman-r <F64>
---kalman-p0 <F64>
+--ewma-alpha <F64>            default 0.20
+--median-window <ODD_USIZE>   default 5
+--kalman-q <F64>              default 0.001
+--kalman-r <F64>              default 0.04
+--kalman-p0 <F64>             default 1.0
 ```
 
 ### `audio compare`
@@ -179,8 +179,8 @@ kalman,...
 - if terminal width can fit 4 panels at >= 20 sparkline characters each, render columns;
 - otherwise render one labeled sparkline per row.
 
-All four filter-comparison traces should share a common y-range for a given frame so visual amplitudes are comparable.
+All four filter-comparison traces share a common y-range for a given frame so visual amplitudes are comparable.
 
-If the series is too long, downsample deterministically. Recommended bucket policy: choose the sample with the largest absolute deviation from the bucket mean, which tends to preserve impulses better than plain averaging.
+If the series is too long, it is downsampled deterministically by choosing the sample with the largest absolute deviation from each bucket's mean. This preserves impulses better than plain averaging.
 
 For audio compare, render only the selected short time window, never the entire multi-second waveform as a sparkline.
