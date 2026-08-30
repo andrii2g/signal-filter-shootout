@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use signal_filter_shootout::{
-    audio::noise::AudioNoiseConfig,
+    audio::{noise::AudioNoiseConfig, process::AudioFilterKind},
     error::{ConfigError, ConfigResult},
     filters::{ShootoutConfig, ewma::EwmaConfig, kalman::KalmanConfig, median::MedianConfig},
     metrics::spike::RecoveryConfig,
@@ -44,6 +44,44 @@ pub(crate) struct AudioArgs {
 pub(crate) enum AudioCommand {
     /// Inject deterministic Gaussian and impulse noise into PCM16 WAV audio.
     InjectNoise(AudioInjectNoiseArgs),
+    /// Apply one filter to PCM16 WAV audio.
+    Filter(AudioFilterArgs),
+    /// Apply and compare all three filters on PCM16 WAV audio.
+    Compare(AudioCompareArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct AudioFilterArgs {
+    input: PathBuf,
+    output: PathBuf,
+    #[arg(long, value_enum)]
+    kind: CliAudioFilterKind,
+    #[command(flatten)]
+    filters: FilterArgs,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct AudioCompareArgs {
+    input: PathBuf,
+    #[arg(long)]
+    reference: Option<PathBuf>,
+    #[arg(long, default_value = "out/audio")]
+    output_dir: PathBuf,
+    #[command(flatten)]
+    filters: FilterArgs,
+    #[arg(long, default_value_t = 0.0, allow_hyphen_values = true)]
+    window_start_ms: f64,
+    #[arg(long, default_value_t = 30.0, allow_hyphen_values = true)]
+    window_duration_ms: f64,
+    #[arg(long)]
+    width: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CliAudioFilterKind {
+    Ewma,
+    Median,
+    Kalman,
 }
 
 #[derive(Debug, Args)]
@@ -188,6 +226,23 @@ pub(crate) struct AudioInjectNoiseRequest {
     pub noise: AudioNoiseConfig,
 }
 
+pub(crate) struct AudioFilterRequest {
+    pub input: PathBuf,
+    pub output: PathBuf,
+    pub kind: AudioFilterKind,
+    pub filters: ShootoutConfig,
+}
+
+pub(crate) struct AudioCompareRequest {
+    pub input: PathBuf,
+    pub reference: Option<PathBuf>,
+    pub output_dir: PathBuf,
+    pub filters: ShootoutConfig,
+    pub window_start_ms: f64,
+    pub window_duration_ms: f64,
+    pub width: Option<usize>,
+}
+
 impl SimulateArgs {
     pub fn validate(self) -> ConfigResult<SimulateRequest> {
         validate_width(self.width)?;
@@ -263,6 +318,65 @@ impl AudioInjectNoiseArgs {
                 self.seed,
             )?,
         })
+    }
+}
+
+impl AudioFilterArgs {
+    pub fn validate(self) -> ConfigResult<AudioFilterRequest> {
+        Ok(AudioFilterRequest {
+            input: self.input,
+            output: self.output,
+            kind: self.kind.into(),
+            filters: self.filters.validate()?,
+        })
+    }
+}
+
+impl AudioCompareArgs {
+    pub fn validate(self) -> ConfigResult<AudioCompareRequest> {
+        validate_width(self.width)?;
+        if !self.window_start_ms.is_finite() {
+            return Err(ConfigError::NonFinite {
+                parameter: "window_start_ms",
+            });
+        }
+        if self.window_start_ms < 0.0 {
+            return Err(ConfigError::InvalidValue {
+                parameter: "window_start_ms",
+                requirement: "must be at least 0",
+            });
+        }
+        if !self.window_duration_ms.is_finite() {
+            return Err(ConfigError::NonFinite {
+                parameter: "window_duration_ms",
+            });
+        }
+        if self.window_duration_ms <= 0.0 {
+            return Err(ConfigError::InvalidValue {
+                parameter: "window_duration_ms",
+                requirement: "must be greater than 0",
+            });
+        }
+
+        Ok(AudioCompareRequest {
+            input: self.input,
+            reference: self.reference,
+            output_dir: self.output_dir,
+            filters: self.filters.validate()?,
+            window_start_ms: self.window_start_ms,
+            window_duration_ms: self.window_duration_ms,
+            width: self.width,
+        })
+    }
+}
+
+impl From<CliAudioFilterKind> for AudioFilterKind {
+    fn from(value: CliAudioFilterKind) -> Self {
+        match value {
+            CliAudioFilterKind::Ewma => Self::Ewma,
+            CliAudioFilterKind::Median => Self::Median,
+            CliAudioFilterKind::Kalman => Self::Kalman,
+        }
     }
 }
 

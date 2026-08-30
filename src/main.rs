@@ -15,6 +15,7 @@ use clap::Parser;
 use signal_filter_shootout::{
     audio::{
         noise::inject_noise,
+        process::{AudioComparison, compare_audio, filter_audio, validate_reference},
         wav::{AudioBuffer, read_path as read_wav, write_path as write_wav},
     },
     filters::{FilterOutputs, apply_all, kalman::KalmanConfig},
@@ -34,7 +35,8 @@ use signal_filter_shootout::{
 };
 
 use crate::cli::{
-    AudioCommand, AudioInjectNoiseRequest, Cli, Command, CsvRequest, SimulateRequest,
+    AudioCommand, AudioCompareRequest, AudioFilterRequest, AudioInjectNoiseRequest, Cli, Command,
+    CsvRequest, SimulateRequest,
 };
 
 fn main() {
@@ -50,6 +52,8 @@ fn run() -> Result<()> {
         Command::Csv(arguments) => run_csv(arguments.validate()?),
         Command::Audio(arguments) => match arguments.command {
             AudioCommand::InjectNoise(arguments) => run_audio_inject_noise(arguments.validate()?),
+            AudioCommand::Filter(arguments) => run_audio_filter(arguments.validate()?),
+            AudioCommand::Compare(arguments) => run_audio_compare(arguments.validate()?),
         },
     }
 }
@@ -78,6 +82,189 @@ fn run_audio_inject_noise(request: AudioInjectNoiseRequest) -> Result<()> {
     );
 
     Ok(())
+}
+
+fn run_audio_filter(request: AudioFilterRequest) -> Result<()> {
+    let audio = read_wav(&request.input)
+        .with_context(|| format!("failed to read WAV '{}'", request.input.display()))?;
+    let output = filter_audio(&audio, request.kind, request.filters)?;
+
+    write_audio_output(&request.output, &output)?;
+    println!(
+        "Wrote {}: {} Hz, {} channel(s), {} frames",
+        request.output.display(),
+        output.sample_rate,
+        output.channels,
+        output.frame_count()
+    );
+    Ok(())
+}
+
+fn run_audio_compare(request: AudioCompareRequest) -> Result<()> {
+    let input = read_wav(&request.input)
+        .with_context(|| format!("failed to read WAV '{}'", request.input.display()))?;
+    let reference = request
+        .reference
+        .as_ref()
+        .map(|path| {
+            read_wav(path)
+                .with_context(|| format!("failed to read reference WAV '{}'", path.display()))
+        })
+        .transpose()?;
+    if let Some(reference) = &reference {
+        validate_reference(&input, reference)?;
+    }
+
+    let outputs = compare_audio(&input, request.filters)?;
+    fs::create_dir_all(&request.output_dir)?;
+    let ewma_path = request.output_dir.join("ewma.wav");
+    let median_path = request.output_dir.join("median.wav");
+    let kalman_path = request.output_dir.join("kalman.wav");
+    write_audio_output(&ewma_path, &outputs.ewma)?;
+    write_audio_output(&median_path, &outputs.median)?;
+    write_audio_output(&kalman_path, &outputs.kalman)?;
+
+    let raw_window =
+        first_channel_window(&input, request.window_start_ms, request.window_duration_ms)?;
+    let ewma_window = first_channel_window(
+        &outputs.ewma,
+        request.window_start_ms,
+        request.window_duration_ms,
+    )?;
+    let median_window = first_channel_window(
+        &outputs.median,
+        request.window_start_ms,
+        request.window_duration_ms,
+    )?;
+    let kalman_window = first_channel_window(
+        &outputs.kalman,
+        request.window_start_ms,
+        request.window_duration_ms,
+    )?;
+    let traces = [
+        TraceView {
+            label: "Raw",
+            values: &raw_window,
+        },
+        TraceView {
+            label: "EWMA",
+            values: &ewma_window,
+        },
+        TraceView {
+            label: "Median",
+            values: &median_window,
+        },
+        TraceView {
+            label: "Kalman",
+            values: &kalman_window,
+        },
+    ];
+    println!(
+        "{}",
+        render_frame(
+            &traces,
+            request.width.unwrap_or_else(available_width),
+            signal_filter_shootout::render::frame::Layout::Auto,
+        )
+    );
+    println!(
+        "Wrote filtered WAVs: {}, {}, {}",
+        ewma_path.display(),
+        median_path.display(),
+        kalman_path.display()
+    );
+
+    if let Some(reference) = &reference {
+        let values = [
+            ("Raw", input.interleaved.as_slice()),
+            ("EWMA", outputs.ewma.interleaved.as_slice()),
+            ("Median", outputs.median.interleaved.as_slice()),
+            ("Kalman", outputs.kalman.interleaved.as_slice()),
+        ];
+        println!();
+        print!("{}", metric_report(&reference.interleaved, &values, None)?);
+        println!("Waveform RMSE/SNR are not perceptual quality measures.");
+
+        let metrics_path = request.output_dir.join("metrics.csv");
+        write_audio_metrics(&metrics_path, reference, &input, &outputs)?;
+        println!("Metrics CSV: {}", metrics_path.display());
+    }
+
+    Ok(())
+}
+
+fn write_audio_output(path: &Path, audio: &AudioBuffer) -> Result<()> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    write_wav(path, audio).with_context(|| format!("failed to write WAV '{}'", path.display()))
+}
+
+fn first_channel_window(audio: &AudioBuffer, start_ms: f64, duration_ms: f64) -> Result<Vec<f64>> {
+    let samples = audio.channel(0)?;
+    let start = (start_ms * f64::from(audio.sample_rate) / 1000.0).floor() as usize;
+    if start >= samples.len() {
+        anyhow::bail!(
+            "audio window starts at {start_ms} ms, beyond the {:.3} ms input duration",
+            samples.len() as f64 * 1000.0 / f64::from(audio.sample_rate)
+        );
+    }
+    let duration = (duration_ms * f64::from(audio.sample_rate) / 1000.0)
+        .ceil()
+        .max(1.0) as usize;
+    let end = start.saturating_add(duration).min(samples.len());
+    Ok(samples[start..end].to_vec())
+}
+
+fn write_audio_metrics(
+    path: &Path,
+    reference: &AudioBuffer,
+    input: &AudioBuffer,
+    outputs: &AudioComparison,
+) -> Result<()> {
+    let traces = [
+        ("raw", input.interleaved.as_slice()),
+        ("ewma", outputs.ewma.interleaved.as_slice()),
+        ("median", outputs.median.interleaved.as_slice()),
+        ("kalman", outputs.kalman.interleaved.as_slice()),
+    ];
+    let input_snr = snr::compute(&reference.interleaved, &input.interleaved)?;
+    let mut writer = BufWriter::new(File::create(path)?);
+    writeln!(writer, "trace,rmse,snr_db,snr_improvement_db,max_abs_error")?;
+    for (label, values) in traces {
+        let errors = error::compute(&reference.interleaved, values)?;
+        let output_snr = snr::compute(&reference.interleaved, values)?;
+        writeln!(
+            writer,
+            "{label},{:.17e},{},{},{:.17e}",
+            errors.rmse,
+            format_snr_csv(output_snr),
+            format_snr_improvement_csv(snr::improvement(input_snr, output_snr)),
+            errors.max_abs,
+        )?;
+    }
+    writer.flush()?;
+    Ok(())
+}
+
+fn format_snr_csv(value: snr::SnrValue) -> String {
+    match value {
+        snr::SnrValue::Finite(value) => format!("{value:.17e}"),
+        snr::SnrValue::Infinite => "inf".to_owned(),
+        snr::SnrValue::Undefined => "n/a".to_owned(),
+    }
+}
+
+fn format_snr_improvement_csv(value: snr::SnrImprovement) -> String {
+    match value {
+        snr::SnrImprovement::Finite(value) => format!("{value:.17e}"),
+        snr::SnrImprovement::PositiveInfinity => "inf".to_owned(),
+        snr::SnrImprovement::NegativeInfinity => "-inf".to_owned(),
+        snr::SnrImprovement::Undefined => "n/a".to_owned(),
+    }
 }
 
 fn run_simulate(request: SimulateRequest) -> Result<()> {
