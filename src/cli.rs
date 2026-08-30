@@ -8,7 +8,10 @@ use signal_filter_shootout::{
     filters::{ShootoutConfig, ewma::EwmaConfig, kalman::KalmanConfig, median::MedianConfig},
     metrics::spike::RecoveryConfig,
     render::frame::Layout,
-    signal::synthetic::{NoiseConfig, SineConfig, SyntheticConfig},
+    signal::{
+        csv::CsvReadOptions,
+        synthetic::{NoiseConfig, SineConfig, SyntheticConfig},
+    },
 };
 
 /// Compare scalar online filters on sensor data and PCM WAV audio.
@@ -23,6 +26,8 @@ pub(crate) struct Cli {
 pub(crate) enum Command {
     /// Compare all filters on deterministic noisy sine-wave data.
     Simulate(SimulateArgs),
+    /// Apply all filters to a headered scalar CSV file.
+    Csv(CsvArgs),
 }
 
 #[derive(Debug, Args)]
@@ -63,6 +68,27 @@ pub(crate) struct SimulateArgs {
 }
 
 #[derive(Debug, Args)]
+pub(crate) struct CsvArgs {
+    /// Input headered CSV file.
+    input: PathBuf,
+    #[arg(long, default_value = "value")]
+    value_column: String,
+    #[arg(long, default_value = "timestamp")]
+    time_column: String,
+    #[arg(long, default_value = "reference")]
+    reference_column: String,
+
+    #[command(flatten)]
+    filters: FilterArgs,
+
+    /// Explicit terminal width; must be at least 40.
+    #[arg(long)]
+    width: Option<usize>,
+    #[arg(long, value_enum, default_value_t = CliLayout::Auto)]
+    layout: CliLayout,
+}
+
+#[derive(Debug, Args)]
 struct FilterArgs {
     #[arg(long, default_value_t = 0.20)]
     ewma_alpha: f64,
@@ -93,30 +119,23 @@ pub(crate) struct SimulateRequest {
     pub report_csv: Option<PathBuf>,
 }
 
+pub(crate) struct CsvRequest {
+    pub input: PathBuf,
+    pub read_options: CsvReadOptions,
+    pub filters: ShootoutConfig,
+    pub width: Option<usize>,
+    pub layout: Layout,
+}
+
 impl SimulateArgs {
     pub fn validate(self) -> ConfigResult<SimulateRequest> {
-        if self.width.is_some_and(|width| width < 40) {
-            return Err(ConfigError::InvalidValue {
-                parameter: "width",
-                requirement: "must be at least 40",
-            });
-        }
-
+        validate_width(self.width)?;
         let sine = SineConfig::new(self.samples, self.amplitude, self.frequency, self.phase)?;
         let noise = NoiseConfig::new(
             self.gaussian_sigma,
             self.spike_probability,
             self.spike_amplitude,
         )?;
-        let filters = ShootoutConfig {
-            ewma: EwmaConfig::new(self.filters.ewma_alpha)?,
-            median: MedianConfig::new(self.filters.median_window)?,
-            kalman: KalmanConfig::new(
-                self.filters.kalman_q,
-                self.filters.kalman_r,
-                self.filters.kalman_p0,
-            )?,
-        };
         let tolerance = 0.10 * self.amplitude.abs().max(1.0);
 
         Ok(SimulateRequest {
@@ -125,17 +144,62 @@ impl SimulateArgs {
                 noise,
                 seed: self.seed,
             },
-            filters,
+            filters: self.filters.validate()?,
             recovery: RecoveryConfig::new(tolerance, 3)?,
             width: self.width,
-            layout: match self.layout {
-                CliLayout::Auto => Layout::Auto,
-                CliLayout::Columns => Layout::Columns,
-                CliLayout::Rows => Layout::Rows,
-            },
+            layout: self.layout.into(),
             show_truth: self.show_truth,
             report_csv: self.report_csv,
         })
+    }
+}
+
+impl CsvArgs {
+    pub fn validate(self) -> ConfigResult<CsvRequest> {
+        validate_width(self.width)?;
+
+        Ok(CsvRequest {
+            input: self.input,
+            read_options: CsvReadOptions {
+                value_column: self.value_column,
+                time_column: self.time_column,
+                reference_column: self.reference_column,
+            },
+            filters: self.filters.validate()?,
+            width: self.width,
+            layout: self.layout.into(),
+        })
+    }
+}
+
+impl FilterArgs {
+    fn validate(self) -> ConfigResult<ShootoutConfig> {
+        Ok(ShootoutConfig {
+            ewma: EwmaConfig::new(self.ewma_alpha)?,
+            median: MedianConfig::new(self.median_window)?,
+            kalman: KalmanConfig::new(self.kalman_q, self.kalman_r, self.kalman_p0)?,
+        })
+    }
+}
+
+impl From<CliLayout> for Layout {
+    fn from(value: CliLayout) -> Self {
+        match value {
+            CliLayout::Auto => Self::Auto,
+            CliLayout::Columns => Self::Columns,
+            CliLayout::Rows => Self::Rows,
+        }
+    }
+}
+
+fn validate_width(width: Option<usize>) -> ConfigResult<()> {
+    if width.is_some_and(|width| width < 40) {
+        Err(ConfigError::InvalidValue {
+            parameter: "width",
+            requirement: "must be at least 40",
+        })
+    } else {
+        Ok(())
     }
 }
 
@@ -146,7 +210,7 @@ mod tests {
     use super::Cli;
 
     #[test]
-    fn help_contains_package_identity_and_simulate_command() {
+    fn help_contains_implemented_commands() {
         let mut command = Cli::command();
         let mut help = Vec::new();
 
@@ -155,5 +219,6 @@ mod tests {
 
         assert!(help.contains("signal-filter-shootout"));
         assert!(help.contains("simulate"));
+        assert!(help.contains("csv"));
     }
 }

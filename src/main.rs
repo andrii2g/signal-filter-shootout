@@ -14,15 +14,18 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use signal_filter_shootout::{
     filters::{FilterOutputs, apply_all},
-    metrics::{error, snr, spike},
+    metrics::{error, snr, spike::SpikeMetrics},
     render::{
         frame::{TraceView, available_width, render_frame},
         report::{TraceMetrics, format_metric_report},
     },
-    signal::synthetic::{SyntheticSeries, generate},
+    signal::{
+        csv::read_path,
+        synthetic::{SyntheticSeries, generate},
+    },
 };
 
-use crate::cli::{Cli, Command, SimulateRequest};
+use crate::cli::{Cli, Command, CsvRequest, SimulateRequest};
 
 fn main() {
     if let Err(error) = run() {
@@ -34,6 +37,7 @@ fn main() {
 fn run() -> Result<()> {
     match Cli::parse().command {
         Command::Simulate(arguments) => run_simulate(arguments.validate()?),
+        Command::Csv(arguments) => run_csv(arguments.validate()?),
     }
 }
 
@@ -49,7 +53,64 @@ fn run_simulate(request: SimulateRequest) -> Result<()> {
             values: &series.truth,
         });
     }
-    traces.extend([
+    traces.extend(trace_views(&outputs));
+    println!("{}", render_frame(&traces, width, request.layout));
+
+    let values = labeled_values(&outputs);
+    let spikes = values
+        .iter()
+        .map(|(_, values)| {
+            signal_filter_shootout::metrics::spike::compute(
+                &series.truth,
+                values,
+                &series.spike_mask,
+                request.recovery,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    println!();
+    print!("{}", metric_report(&series.truth, &values, Some(&spikes))?);
+
+    if let Some(path) = request.report_csv {
+        write_sample_report(&path, &series, &outputs)
+            .with_context(|| format!("failed to write report '{}'", path.display()))?;
+        println!("Per-sample CSV: {}", path.display());
+    }
+
+    Ok(())
+}
+
+fn run_csv(request: CsvRequest) -> Result<()> {
+    let series = read_path(&request.input, &request.read_options)
+        .with_context(|| format!("failed to load '{}'", request.input.display()))?;
+    let outputs = apply_all(&series.values, request.filters)?;
+    let width = request.width.unwrap_or_else(available_width);
+
+    println!(
+        "{}",
+        render_frame(&trace_views(&outputs), width, request.layout)
+    );
+    println!();
+
+    if let Some(reference) = &series.reference {
+        println!(
+            "Reference: CSV column '{}'",
+            request.read_options.reference_column
+        );
+        print!(
+            "{}",
+            metric_report(reference, &labeled_values(&outputs), None)?
+        );
+    } else {
+        println!("Reference: none (metrics unavailable without a reference column)");
+    }
+
+    Ok(())
+}
+
+fn trace_views(outputs: &FilterOutputs) -> [TraceView<'_>; 4] {
+    [
         TraceView {
             label: "Raw",
             values: &outputs.raw,
@@ -66,30 +127,31 @@ fn run_simulate(request: SimulateRequest) -> Result<()> {
             label: "Kalman",
             values: &outputs.kalman,
         },
-    ]);
+    ]
+}
 
-    println!("{}", render_frame(&traces, width, request.layout));
+fn labeled_values(outputs: &FilterOutputs) -> [(&'static str, &[f64]); 4] {
+    [
+        ("Raw", &outputs.raw),
+        ("EWMA", &outputs.ewma),
+        ("Median", &outputs.median),
+        ("Kalman", &outputs.kalman),
+    ]
+}
 
-    let values = [
-        ("Raw", outputs.raw.as_slice()),
-        ("EWMA", outputs.ewma.as_slice()),
-        ("Median", outputs.median.as_slice()),
-        ("Kalman", outputs.kalman.as_slice()),
-    ];
-    let input_snr = snr::compute(&series.truth, &outputs.raw)?;
+fn metric_report(
+    reference: &[f64],
+    values: &[(&str, &[f64])],
+    spikes: Option<&[SpikeMetrics]>,
+) -> Result<String> {
+    let input_snr = snr::compute(reference, values[0].1)?;
     let errors = values
         .iter()
-        .map(|(_, values)| error::compute(&series.truth, values))
+        .map(|(_, values)| error::compute(reference, values))
         .collect::<Result<Vec<_>, _>>()?;
     let snrs = values
         .iter()
-        .map(|(_, values)| snr::compute(&series.truth, values))
-        .collect::<Result<Vec<_>, _>>()?;
-    let spikes = values
-        .iter()
-        .map(|(_, values)| {
-            spike::compute(&series.truth, values, &series.spike_mask, request.recovery)
-        })
+        .map(|(_, values)| snr::compute(reference, values))
         .collect::<Result<Vec<_>, _>>()?;
     let report_rows = values
         .iter()
@@ -99,20 +161,11 @@ fn run_simulate(request: SimulateRequest) -> Result<()> {
             error: errors[index],
             snr: snrs[index],
             improvement: snr::improvement(input_snr, snrs[index]),
-            spike: &spikes[index],
+            spike: spikes.map(|spikes| &spikes[index]),
         })
         .collect::<Vec<_>>();
 
-    println!();
-    print!("{}", format_metric_report(&report_rows));
-
-    if let Some(path) = request.report_csv {
-        write_sample_report(&path, &series, &outputs)
-            .with_context(|| format!("failed to write report '{}'", path.display()))?;
-        println!("Per-sample CSV: {}", path.display());
-    }
-
-    Ok(())
+    Ok(format_metric_report(&report_rows))
 }
 
 fn write_sample_report(

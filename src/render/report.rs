@@ -13,7 +13,7 @@ pub struct TraceMetrics<'a> {
     pub error: ErrorMetrics,
     pub snr: SnrValue,
     pub improvement: SnrImprovement,
-    pub spike: &'a SpikeMetrics,
+    pub spike: Option<&'a SpikeMetrics>,
 }
 
 /// Format a compact sensor comparison report.
@@ -43,20 +43,24 @@ pub fn format_metric_report(traces: &[TraceMetrics<'_>]) -> String {
         ));
     }
 
-    output.push_str("Spike metrics:\n");
-    for trace in traces {
-        output.push_str(&format!(
-            "  {:<8} count={} spike_rmse={} recovery_mean={} recovery_max={} unrecovered={}\n",
-            trace.label,
-            trace.spike.count,
-            format_optional_f64(trace.spike.spike_rmse),
-            format_optional_f64(trace.spike.mean_recovery_samples),
-            trace
-                .spike
-                .max_recovery_samples
-                .map_or_else(|| "n/a".to_owned(), |value| value.to_string()),
-            trace.spike.unrecovered_count,
-        ));
+    if traces.iter().any(|trace| trace.spike.is_some()) {
+        output.push_str("Spike metrics:\n");
+        for trace in traces {
+            let Some(spike) = trace.spike else {
+                continue;
+            };
+            output.push_str(&format!(
+                "  {:<8} count={} spike_rmse={} recovery_mean={} recovery_max={} unrecovered={}\n",
+                trace.label,
+                spike.count,
+                format_optional_f64(spike.spike_rmse),
+                format_optional_f64(spike.mean_recovery_samples),
+                spike
+                    .max_recovery_samples
+                    .map_or_else(|| "n/a".to_owned(), |value| value.to_string()),
+                spike.unrecovered_count,
+            ));
+        }
     }
 
     output
@@ -121,7 +125,7 @@ mod tests {
                 },
                 snr: SnrValue::Finite(1.0),
                 improvement: SnrImprovement::Finite(0.0),
-                spike: &spikes,
+                spike: Some(&spikes),
             },
             TraceMetrics {
                 label: "EWMA",
@@ -132,7 +136,7 @@ mod tests {
                 },
                 snr: SnrValue::Infinite,
                 improvement: SnrImprovement::PositiveInfinity,
-                spike: &spikes,
+                spike: Some(&spikes),
             },
         ];
 
