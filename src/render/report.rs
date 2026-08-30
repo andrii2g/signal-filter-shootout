@@ -6,6 +6,7 @@ use crate::metrics::{
     spike::SpikeMetrics,
 };
 
+use crate::tuning::grid_search::KalmanCandidate;
 /// Precomputed metrics for one labeled trace.
 #[derive(Debug, Clone, Copy)]
 pub struct TraceMetrics<'a> {
@@ -66,6 +67,25 @@ pub fn format_metric_report(traces: &[TraceMetrics<'_>]) -> String {
     output
 }
 
+/// Format the winning Kalman parameters and deterministic top candidates.
+pub fn format_tuning_report(best: KalmanCandidate, candidates: &[KalmanCandidate]) -> String {
+    let mut output = format!(
+        "Best Kalman: Q={:.6e} R={:.6e} RMSE={:.6}\n",
+        best.q, best.r, best.rmse
+    );
+    output.push_str("Rank  Q            R            RMSE\n");
+    for (index, candidate) in candidates.iter().enumerate() {
+        output.push_str(&format!(
+            "{:>4}  {:>12.6e} {:>12.6e} {:.6}\n",
+            index + 1,
+            candidate.q,
+            candidate.r,
+            candidate.rmse
+        ));
+    }
+    output
+}
+
 fn winner<'a>(
     traces: &'a [TraceMetrics<'a>],
     metric: impl Fn(&TraceMetrics<'_>) -> f64,
@@ -98,12 +118,13 @@ fn format_optional_f64(value: Option<f64>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{TraceMetrics, format_metric_report};
+    use super::{TraceMetrics, format_metric_report, format_tuning_report};
     use crate::metrics::{
         error::ErrorMetrics,
         snr::{SnrImprovement, SnrValue},
         spike::SpikeMetrics,
     };
+    use crate::tuning::grid_search::KalmanCandidate;
 
     #[test]
     fn report_contains_metrics_winners_and_spikes() {
@@ -145,5 +166,26 @@ mod tests {
         assert!(report.contains("Trace"));
         assert!(report.contains("Winners: RMSE=EWMA"));
         assert!(report.contains("Spike metrics:"));
+    }
+
+    #[test]
+    fn tuning_report_contains_best_and_ranked_candidates() {
+        let candidates = [
+            KalmanCandidate {
+                q: 0.001,
+                r: 0.04,
+                rmse: 0.2,
+            },
+            KalmanCandidate {
+                q: 0.003,
+                r: 0.04,
+                rmse: 0.3,
+            },
+        ];
+        let report = format_tuning_report(candidates[0], &candidates);
+
+        assert!(report.contains("Best Kalman:"));
+        assert!(report.contains("Rank"));
+        assert!(report.contains("0.200000"));
     }
 }

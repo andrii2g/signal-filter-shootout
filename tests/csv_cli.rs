@@ -42,14 +42,13 @@ fn bundled_reference_csv_runs_with_metrics() {
 }
 
 #[test]
-fn bundled_csv_without_reference_runs_without_accuracy_claims() {
+fn bundled_csv_without_reference_uses_labeled_pseudo_reference() {
     let output = run(&["csv", "samples/sensor/no_reference.csv"]);
 
     assert!(output.status.success());
     let stdout = stdout(&output);
-    assert!(stdout.contains("Reference: none"));
-    assert!(stdout.contains("metrics unavailable"));
-    assert!(!stdout.contains("RMSE"));
+    assert!(stdout.contains("Reference: offline pseudo-reference (not ground truth)"));
+    assert!(stdout.contains("RMSE"));
 }
 
 #[test]
@@ -95,4 +94,64 @@ fn missing_value_column_exits_nonzero() {
     let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
     assert!(stderr.contains("missing required value column 'value'"));
     std::fs::remove_file(path).expect("remove temporary CSV");
+}
+#[test]
+fn auto_tune_prefers_explicit_reference_and_prints_ranked_candidates() {
+    let output = run(&[
+        "csv",
+        "samples/sensor/with_reference.csv",
+        "--auto-tune-kalman",
+        "--q-min-exp",
+        "-3",
+        "--q-max-exp",
+        "-2",
+        "--r-min-exp",
+        "-3",
+        "--r-max-exp",
+        "-2",
+        "--grid-multipliers",
+        "1",
+        "--top",
+        "2",
+    ]);
+
+    assert!(output.status.success());
+    let stdout = stdout(&output);
+    assert!(stdout.contains("Reference: CSV column 'reference'"));
+    assert!(stdout.contains("Best Kalman:"));
+    assert!(stdout.contains("Rank"));
+}
+
+#[test]
+fn tuning_csv_contains_rank_one_and_every_candidate() {
+    let path = temp_csv("");
+    let path_text = path.to_string_lossy().into_owned();
+    let output = run(&[
+        "csv",
+        "samples/sensor/no_reference.csv",
+        "--auto-tune-kalman",
+        "--q-min-exp",
+        "-3",
+        "--q-max-exp",
+        "-2",
+        "--r-min-exp",
+        "-3",
+        "--r-max-exp",
+        "-2",
+        "--grid-multipliers",
+        "1",
+        "--top",
+        "2",
+        "--tuning-csv",
+        &path_text,
+    ]);
+
+    assert!(output.status.success());
+    assert!(stdout(&output).contains("offline pseudo-reference (not ground truth)"));
+    let csv = std::fs::read_to_string(&path).expect("read tuning CSV");
+    let lines = csv.lines().collect::<Vec<_>>();
+    assert_eq!(lines[0], "rank,q,r,rmse");
+    assert!(lines[1].starts_with("1,"));
+    assert_eq!(lines.len(), 5);
+    std::fs::remove_file(path).expect("remove tuning CSV");
 }

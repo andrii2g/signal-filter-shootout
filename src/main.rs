@@ -13,15 +13,19 @@ use std::{
 use anyhow::{Context, Result};
 use clap::Parser;
 use signal_filter_shootout::{
-    filters::{FilterOutputs, apply_all},
+    filters::{FilterOutputs, apply_all, kalman::KalmanConfig},
     metrics::{error, snr, spike::SpikeMetrics},
     render::{
         frame::{TraceView, available_width, render_frame},
-        report::{TraceMetrics, format_metric_report},
+        report::{TraceMetrics, format_metric_report, format_tuning_report},
     },
     signal::{
         csv::read_path,
         synthetic::{SyntheticSeries, generate},
+    },
+    tuning::{
+        grid_search::{GridSearchResult, search},
+        reference::{ReferenceConfig, build_pseudo_reference},
     },
 };
 
@@ -84,27 +88,62 @@ fn run_simulate(request: SimulateRequest) -> Result<()> {
 fn run_csv(request: CsvRequest) -> Result<()> {
     let series = read_path(&request.input, &request.read_options)
         .with_context(|| format!("failed to load '{}'", request.input.display()))?;
-    let outputs = apply_all(&series.values, request.filters)?;
-    let width = request.width.unwrap_or_else(available_width);
+    let (reference, reference_label) = if let Some(reference) = &series.reference {
+        (
+            reference.clone(),
+            format!(
+                "Reference: CSV column '{}'",
+                request.read_options.reference_column
+            ),
+        )
+    } else {
+        (
+            build_pseudo_reference(&series.values, ReferenceConfig::default())?,
+            "Reference: offline pseudo-reference (not ground truth)".to_owned(),
+        )
+    };
 
+    let mut filters = request.filters;
+    let mut tuning_result = None;
+    let mut tuning_top = 0;
+    if let Some(tuning) = request.tuning {
+        let result = search(
+            &series.values,
+            &reference,
+            &tuning.grid,
+            filters.kalman.p0(),
+        )?;
+        filters.kalman = KalmanConfig::new(result.best.q, result.best.r, filters.kalman.p0())?;
+        tuning_top = tuning.grid.top();
+
+        if let Some(path) = tuning.output_csv {
+            write_tuning_csv(&path, &result)
+                .with_context(|| format!("failed to write tuning CSV '{}'", path.display()))?;
+            println!("Tuning CSV: {}", path.display());
+        }
+        tuning_result = Some(result);
+    }
+
+    let outputs = apply_all(&series.values, filters)?;
+    let width = request.width.unwrap_or_else(available_width);
     println!(
         "{}",
         render_frame(&trace_views(&outputs), width, request.layout)
     );
     println!();
+    println!("{reference_label}");
 
-    if let Some(reference) = &series.reference {
-        println!(
-            "Reference: CSV column '{}'",
-            request.read_options.reference_column
-        );
+    if let Some(result) = &tuning_result {
         print!(
             "{}",
-            metric_report(reference, &labeled_values(&outputs), None)?
+            format_tuning_report(result.best, result.top(tuning_top))
         );
-    } else {
-        println!("Reference: none (metrics unavailable without a reference column)");
+        println!();
     }
+    print!(
+        "{}",
+        metric_report(&reference, &labeled_values(&outputs), None)?
+    );
 
     Ok(())
 }
@@ -196,6 +235,28 @@ fn write_sample_report(
         )?;
     }
 
+    writer.flush()?;
+    Ok(())
+}
+fn write_tuning_csv(path: &Path, result: &GridSearchResult) -> Result<()> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    let mut writer = BufWriter::new(File::create(path)?);
+    writeln!(writer, "rank,q,r,rmse")?;
+    for (index, candidate) in result.ranked.iter().enumerate() {
+        writeln!(
+            writer,
+            "{},{:.17e},{:.17e},{:.17e}",
+            index + 1,
+            candidate.q,
+            candidate.r,
+            candidate.rmse
+        )?;
+    }
     writer.flush()?;
     Ok(())
 }

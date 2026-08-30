@@ -12,6 +12,7 @@ use signal_filter_shootout::{
         csv::CsvReadOptions,
         synthetic::{NoiseConfig, SineConfig, SyntheticConfig},
     },
+    tuning::grid_search::GridSearchConfig,
 };
 
 /// Compare scalar online filters on sensor data and PCM WAV audio.
@@ -86,6 +87,25 @@ pub(crate) struct CsvArgs {
     width: Option<usize>,
     #[arg(long, value_enum, default_value_t = CliLayout::Auto)]
     layout: CliLayout,
+
+    /// Search the configured logarithmic Kalman Q/R grid.
+    #[arg(long)]
+    auto_tune_kalman: bool,
+    #[arg(long, default_value_t = -8, allow_hyphen_values = true)]
+    q_min_exp: i32,
+    #[arg(long, default_value_t = -1, allow_hyphen_values = true)]
+    q_max_exp: i32,
+    #[arg(long, default_value_t = -6, allow_hyphen_values = true)]
+    r_min_exp: i32,
+    #[arg(long, default_value_t = 1, allow_hyphen_values = true)]
+    r_max_exp: i32,
+    #[arg(long, value_delimiter = ',', default_value = "1,3")]
+    grid_multipliers: Vec<f64>,
+    #[arg(long, default_value_t = 5)]
+    top: usize,
+    /// Write every ranked tuning candidate to CSV.
+    #[arg(long)]
+    tuning_csv: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -125,6 +145,12 @@ pub(crate) struct CsvRequest {
     pub filters: ShootoutConfig,
     pub width: Option<usize>,
     pub layout: Layout,
+    pub tuning: Option<TuningRequest>,
+}
+
+pub(crate) struct TuningRequest {
+    pub grid: GridSearchConfig,
+    pub output_csv: Option<PathBuf>,
 }
 
 impl SimulateArgs {
@@ -157,6 +183,23 @@ impl SimulateArgs {
 impl CsvArgs {
     pub fn validate(self) -> ConfigResult<CsvRequest> {
         validate_width(self.width)?;
+        let tuning = self
+            .auto_tune_kalman
+            .then(|| {
+                GridSearchConfig::new(
+                    self.q_min_exp,
+                    self.q_max_exp,
+                    self.r_min_exp,
+                    self.r_max_exp,
+                    self.grid_multipliers,
+                    self.top,
+                )
+                .map(|grid| TuningRequest {
+                    grid,
+                    output_csv: self.tuning_csv,
+                })
+            })
+            .transpose()?;
 
         Ok(CsvRequest {
             input: self.input,
@@ -168,6 +211,7 @@ impl CsvArgs {
             filters: self.filters.validate()?,
             width: self.width,
             layout: self.layout.into(),
+            tuning,
         })
     }
 }
