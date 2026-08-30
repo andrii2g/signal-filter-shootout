@@ -1,0 +1,7 @@
+id,description,transcript,clean_wav,noisy_wav,tts_voice,tts_speed,tts_pitch,sample_rate_hz,channels,bits_per_sample,noise_kind,gaussian_sigma,spike_probability,spike_amplitude,noise_seed
+01_general,General phonetic coverage,samples/audio/transcripts/01_general.txt,samples/audio/clean/01_general.wav,samples/audio/noisy/01_general_mixed.wav,en-us,150,48,16000,1,16,mixed,0.035,0.0008,0.85,4101
+02_iot,IoT and numeric speech,samples/audio/transcripts/02_iot.txt,samples/audio/clean/02_iot.wav,samples/audio/noisy/02_iot_mixed.wav,en-us,150,48,16000,1,16,mixed,0.035,0.0008,0.85,4102
+03_filter_terms,Filter terminology,samples/audio/transcripts/03_filter_terms.txt,samples/audio/clean/03_filter_terms.wav,samples/audio/noisy/03_filter_terms_mixed.wav,en-us,150,48,16000,1,16,mixed,0.035,0.0008,0.85,4103
+04_transients,Plosive and sibilant stress,samples/audio/transcripts/04_transients.txt,samples/audio/clean/04_transients.wav,samples/audio/noisy/04_transients_mixed.wav,en-us,150,48,16000,1,16,mixed,0.035,0.0008,0.85,4104
+01_general_gaussian,Gaussian-only diagnostic,samples/audio/transcripts/01_general.txt,samples/audio/clean/01_general.wav,samples/audio/noisy/01_general_gaussian.wav,en-us,150,48,16000,1,16,gaussian,0.035,0,0,4201
+01_general_impulse,Impulse-only diagnostic,samples/audio/transcripts/01_general.txt,samples/audio/clean/01_general.wav,samples/audio/noisy/01_general_impulse.wav,en-us,150,48,16000,1,16,impulse,0,0.0008,0.85,4202

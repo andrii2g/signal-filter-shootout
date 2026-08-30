@@ -1,0 +1,1 @@
+Temperature is twenty one point seven degrees Celsius. Pressure is one thousand thirteen hectopascals. A sudden sensor spike should not become the final estimate.

@@ -1,0 +1,1 @@
+Kalman follows gradual change. Median rejects isolated clicks. Exponential smoothing is fast and inexpensive.
