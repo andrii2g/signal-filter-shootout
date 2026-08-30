@@ -1,0 +1,6 @@
+# Project-local defaults.
+# Intentionally conservative: do not pin a model, reasoning effort, approval policy,
+# or sandbox mode here. Those remain user/workstation choices.
+
+# Keep project discovery rooted at the Git repository.
+project_root_markers = [".git"]
