@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use signal_filter_shootout::{
+    audio::noise::AudioNoiseConfig,
     error::{ConfigError, ConfigResult},
     filters::{ShootoutConfig, ewma::EwmaConfig, kalman::KalmanConfig, median::MedianConfig},
     metrics::spike::RecoveryConfig,
@@ -29,6 +30,34 @@ pub(crate) enum Command {
     Simulate(SimulateArgs),
     /// Apply all filters to a headered scalar CSV file.
     Csv(CsvArgs),
+    /// Work with PCM16 WAV audio.
+    Audio(AudioArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct AudioArgs {
+    #[command(subcommand)]
+    pub command: AudioCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum AudioCommand {
+    /// Inject deterministic Gaussian and impulse noise into PCM16 WAV audio.
+    InjectNoise(AudioInjectNoiseArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct AudioInjectNoiseArgs {
+    input: PathBuf,
+    output: PathBuf,
+    #[arg(long, default_value_t = 0.03, allow_hyphen_values = true)]
+    gaussian_sigma: f64,
+    #[arg(long, default_value_t = 0.0008, allow_hyphen_values = true)]
+    spike_probability: f64,
+    #[arg(long, default_value_t = 0.85, allow_hyphen_values = true)]
+    spike_amplitude: f64,
+    #[arg(long, default_value_t = 42)]
+    seed: u64,
 }
 
 #[derive(Debug, Args)]
@@ -153,6 +182,12 @@ pub(crate) struct TuningRequest {
     pub output_csv: Option<PathBuf>,
 }
 
+pub(crate) struct AudioInjectNoiseRequest {
+    pub input: PathBuf,
+    pub output: PathBuf,
+    pub noise: AudioNoiseConfig,
+}
+
 impl SimulateArgs {
     pub fn validate(self) -> ConfigResult<SimulateRequest> {
         validate_width(self.width)?;
@@ -216,6 +251,21 @@ impl CsvArgs {
     }
 }
 
+impl AudioInjectNoiseArgs {
+    pub fn validate(self) -> ConfigResult<AudioInjectNoiseRequest> {
+        Ok(AudioInjectNoiseRequest {
+            input: self.input,
+            output: self.output,
+            noise: AudioNoiseConfig::new(
+                self.gaussian_sigma,
+                self.spike_probability,
+                self.spike_amplitude,
+                self.seed,
+            )?,
+        })
+    }
+}
+
 impl FilterArgs {
     fn validate(self) -> ConfigResult<ShootoutConfig> {
         Ok(ShootoutConfig {
@@ -264,5 +314,6 @@ mod tests {
         assert!(help.contains("signal-filter-shootout"));
         assert!(help.contains("simulate"));
         assert!(help.contains("csv"));
+        assert!(help.contains("audio"));
     }
 }

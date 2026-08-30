@@ -13,6 +13,10 @@ use std::{
 use anyhow::{Context, Result};
 use clap::Parser;
 use signal_filter_shootout::{
+    audio::{
+        noise::inject_noise,
+        wav::{AudioBuffer, read_path as read_wav, write_path as write_wav},
+    },
     filters::{FilterOutputs, apply_all, kalman::KalmanConfig},
     metrics::{error, snr, spike::SpikeMetrics},
     render::{
@@ -29,7 +33,9 @@ use signal_filter_shootout::{
     },
 };
 
-use crate::cli::{Cli, Command, CsvRequest, SimulateRequest};
+use crate::cli::{
+    AudioCommand, AudioInjectNoiseRequest, Cli, Command, CsvRequest, SimulateRequest,
+};
 
 fn main() {
     if let Err(error) = run() {
@@ -42,7 +48,36 @@ fn run() -> Result<()> {
     match Cli::parse().command {
         Command::Simulate(arguments) => run_simulate(arguments.validate()?),
         Command::Csv(arguments) => run_csv(arguments.validate()?),
+        Command::Audio(arguments) => match arguments.command {
+            AudioCommand::InjectNoise(arguments) => run_audio_inject_noise(arguments.validate()?),
+        },
     }
+}
+
+fn run_audio_inject_noise(request: AudioInjectNoiseRequest) -> Result<()> {
+    let audio = read_wav(&request.input)
+        .with_context(|| format!("failed to read WAV '{}'", request.input.display()))?;
+    let result = inject_noise(&audio, request.noise)?;
+    let output = AudioBuffer::new(audio.sample_rate, audio.channels, result.samples)?;
+
+    if let Some(parent) = request
+        .output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    write_wav(&request.output, &output)
+        .with_context(|| format!("failed to write WAV '{}'", request.output.display()))?;
+    println!(
+        "Wrote {}: {} Hz, {} channel(s), {} frames",
+        request.output.display(),
+        output.sample_rate,
+        output.channels,
+        output.frame_count()
+    );
+
+    Ok(())
 }
 
 fn run_simulate(request: SimulateRequest) -> Result<()> {
