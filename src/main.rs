@@ -1,7 +1,13 @@
-//! CLI entry point.
-//!
-//! Codex task: implement the complete Clap dispatch specified in docs/04-cli-contract.md.
+//! CLI entry point and, in later phases, command orchestration.
+
+#![forbid(unsafe_code)]
+
+mod cli;
+
+use clap::Parser;
+
+use crate::cli::Cli;
 
 fn main() {
-    eprintln!("signal-filter-shootout starter: implementation pending; see docs/07-implementation-phases.md");
+    let _cli = Cli::parse();
 }

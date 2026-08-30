@@ -1,8 +1,9 @@
 //! Library surface for signal-filter-shootout.
-//!
-//! Codex: implement modules according to docs/09-file-map.md and AGENTS.md.
+
+#![forbid(unsafe_code)]
 
 pub mod audio;
+pub mod error;
 pub mod filters;
 pub mod metrics;
 pub mod render;
